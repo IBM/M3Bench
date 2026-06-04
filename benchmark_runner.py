@@ -57,8 +57,10 @@ from contextlib import AsyncExitStack
 import json
 import argparse
 import logging
+import importlib
+import sys
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Union
 
 from dotenv import load_dotenv
 from tqdm import tqdm
@@ -111,9 +113,12 @@ logging.getLogger("langgraph").setLevel(logging.WARNING)
 logging.getLogger("ibm_watsonx_ai").setLevel(logging.WARNING)
 
 from agents.agent_interface import (
+    AgentResponse,
     AgentInterface,
     LangGraphReActAgent,
+    Message,
 )
+from agents.components.tool_shortlister import ToolShortlister
 from agents.llm import create_llm
 from agents.mcp_tool_wrapper import MCPToolWrapper
 
@@ -145,8 +150,201 @@ load_dotenv()
 DEFAULT_MCP_CONFIG = str(
     Path(__file__).parent / "benchmark" / "mcp_connection_config.yaml"
 )
+DEFAULT_MCP_COSMOS_ROOT = Path(
+    os.environ.get(
+        "MCP_COSMOS_ROOT",
+        str(Path(__file__).parents[2] / "MCP-Cosmos"),
+    )
+)
 # Timeout for agent execution (seconds)
 AGENT_TIMEOUT_SECONDS = float(os.environ.get("AGENT_TIMEOUT_SECONDS", "300"))
+
+
+class SPIRALAgentVAKRAWrapper(AgentInterface):
+    """VAKRA benchmark adapter for MCP-Cosmos' SPIRALAgentWrapper."""
+
+    def __init__(
+        self,
+        tools,
+        generation_model_name: str = "watsonx__gpt-120b",
+        simulation_model_name: Optional[str] = None,
+        mcts_iterations: int = 50,
+        max_depth: int = 8,
+        top_k_tools: int = 0,
+        cosmos_root: Path = DEFAULT_MCP_COSMOS_ROOT,
+        use_world_model: bool = True,
+        content_summary_threshold: int = 10000,
+        content_truncate_length: int = 5000,
+        error_truncate_length: int = 2000,
+        user_prompt_max_length: int = 100000,
+        **_,
+    ):
+        self._tools = tools or []
+        self._initial_data_handle: str | None = None
+        self._initial_data_peek: dict | None = None
+        self.generation_model_name = generation_model_name
+        self.simulation_model_name = simulation_model_name or generation_model_name
+        self.mcts_iterations = mcts_iterations
+        self.max_depth = max_depth
+        self.cosmos_root = Path(cosmos_root)
+        self.use_world_model = use_world_model
+        self.content_summary_threshold = content_summary_threshold
+        self.content_truncate_length = content_truncate_length
+        self.error_truncate_length = error_truncate_length
+        self.user_prompt_max_length = user_prompt_max_length
+
+        self._shortlister = None
+        if top_k_tools > 0 and top_k_tools < len(self._tools):
+            self._shortlister = ToolShortlister(top_k=top_k_tools)
+            self._shortlister.encode_tools(self._tools)
+
+    def _load_cosmos(self):
+        """Import MCP-Cosmos modules despite VAKRA's top-level agents package."""
+        if not self.cosmos_root.exists():
+            raise FileNotFoundError(f"MCP-Cosmos root not found: {self.cosmos_root}")
+
+        cosmos_path = str(self.cosmos_root)
+        removed_modules = {}
+        for name in list(sys.modules):
+            if (
+                name == "agents"
+                or name.startswith("agents.")
+                or name == "llm"
+                or name.startswith("llm.")
+                or name == "utils"
+                or name.startswith("utils.")
+                or name == "config"
+                or name.startswith("config.")
+                or name == "world_models"
+                or name.startswith("world_models.")
+            ):
+                removed_modules[name] = sys.modules.pop(name)
+
+        sys.path.insert(0, cosmos_path)
+        try:
+            spiral_module = importlib.import_module("agents.spiral_agent_wrapper")
+            world_model_module = importlib.import_module("world_models.world_model")
+            return spiral_module.SPIRALAgentWrapper, world_model_module.LLMWorldModel
+        finally:
+            try:
+                sys.path.remove(cosmos_path)
+            except ValueError:
+                pass
+            for name, module in removed_modules.items():
+                if name == "agents" or name.startswith("agents."):
+                    sys.modules[name] = module
+                else:
+                    sys.modules.setdefault(name, module)
+
+    def _build_task(self, input: Union[str, List[Message]], additional_instructions: str = None) -> str:
+        parts: List[str] = []
+        if self._initial_data_handle:
+            parts.append(
+                "INITIAL DATA:\n"
+                f'- The initial dataset is already loaded as handle "{self._initial_data_handle}".\n'
+                "- Use this handle as the data_label/input handle for dataset tools."
+            )
+            if self._initial_data_peek:
+                parts.append(f"Initial data peek:\n{json.dumps(self._initial_data_peek, indent=2)}")
+        if additional_instructions and additional_instructions.strip():
+            parts.append(f"Additional instructions:\n{additional_instructions}")
+        if isinstance(input, str):
+            parts.append(input)
+        else:
+            transcript = []
+            for message in input:
+                transcript.append(f"{message.role.upper()}: {message.content}")
+            parts.append("Conversation so far:\n" + "\n".join(transcript))
+        return "\n\n".join(parts)
+
+    def _build_trajectory(self, task: str, spiral_result: dict) -> List[dict]:
+        trajectory = [{"type": "HumanMessage", "content": task}]
+        for execution in spiral_result.get("execution_results", []):
+            tool_name = execution.get("tool", "unknown")
+            trajectory.append(
+                {
+                    "type": "AIMessage",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": str(len(trajectory)),
+                            "name": tool_name,
+                            "args": execution.get("arguments", execution.get("parameters", {})),
+                        }
+                    ],
+                }
+            )
+            trajectory.append(
+                {
+                    "type": "ToolMessage",
+                    "content": str(execution.get("result", execution.get("error", ""))),
+                    "tool_name": tool_name,
+                    "result": execution.get("result", execution.get("error", "")),
+                }
+            )
+        trajectory.append(
+            {
+                "type": "AIMessage",
+                "content": spiral_result.get("solution", ""),
+            }
+        )
+        return trajectory
+
+    async def run(
+        self,
+        input: Union[str, List[Message]],
+        additional_instructions: str = None,
+    ) -> AgentResponse:
+        query = input if isinstance(input, str) else next(
+            (m.content for m in reversed(input) if m.role == "user"), ""
+        )
+        active_tools = (
+            self._shortlister.shortlist(query, self._tools)
+            if self._shortlister
+            else self._tools
+        )
+        SPIRALAgentWrapper, LLMWorldModel = self._load_cosmos()
+        world_model = (
+            LLMWorldModel(simulation_model_name=self.simulation_model_name)
+            if self.use_world_model
+            else None
+        )
+        wrapper = SPIRALAgentWrapper(
+            langchain_tools=active_tools,
+            generation_model_name=self.generation_model_name,
+            mcts_iterations=self.mcts_iterations,
+            max_depth=self.max_depth,
+            world_model=world_model,
+            content_summary_threshold=self.content_summary_threshold,
+            content_truncate_length=self.content_truncate_length,
+            error_truncate_length=self.error_truncate_length,
+            user_prompt_max_length=self.user_prompt_max_length,
+        )
+        task = self._build_task(input, additional_instructions)
+        spiral_result = await wrapper.execute(task)
+        tool_calls = [
+            {
+                "tool_name": item.get("tool", "unknown"),
+                "arguments": item.get("arguments", item.get("parameters", {})),
+                "result": item.get("result", item.get("error", "")),
+            }
+            for item in spiral_result.get("execution_results", [])
+        ]
+        return AgentResponse(
+            content=spiral_result.get("solution", ""),
+            tool_calls=tool_calls,
+            messages=[Message(role="assistant", content=spiral_result.get("solution", ""))],
+            metadata={
+                "agent": "spiral",
+                "total_rounds": spiral_result.get("total_rounds"),
+                "total_tokens": spiral_result.get("total_tokens"),
+                "generation_tokens": spiral_result.get("generation_tokens"),
+                "simulation_tokens": spiral_result.get("simulation_tokens"),
+            },
+            trajectory=self._build_trajectory(task, spiral_result),
+            all_tools=[t.name for t in self._tools],
+            shortlisted_tools=[t.name for t in active_tools],
+        )
 
 
 async def run_benchmark_for_domain(
@@ -158,6 +356,13 @@ async def run_benchmark_for_domain(
     max_samples: Optional[int] = None,
     top_k_tools: int = 0,
     max_iterations: Optional[int] = None,
+    agent_type: str = "react",
+    spiral_model: str = "watsonx__gpt-120b",
+    spiral_simulation_model: Optional[str] = None,
+    spiral_mcts_iterations: int = 50,
+    spiral_max_depth: int = 8,
+    spiral_use_world_model: bool = True,
+    mcp_cosmos_root: Path = DEFAULT_MCP_COSMOS_ROOT,
     tlog: CapabilityLogger = None,
 ) -> List[BenchmarkResult]:
     """Run benchmark for a single domain - starts MCP server once."""
@@ -193,7 +398,20 @@ async def run_benchmark_for_domain(
             tools = await wrapper.get_tools()
             tlog(f"  Loaded {len(tools)} tools for domain '{domain}'")
 
-            agent = _get_agent(capability_id, llm, tools, top_k_tools, max_iterations)
+            agent = _get_agent(
+                capability_id=capability_id,
+                llm=llm,
+                tools=tools,
+                top_k_tools=top_k_tools,
+                max_iterations=max_iterations,
+                agent_type=agent_type,
+                spiral_model=spiral_model,
+                spiral_simulation_model=spiral_simulation_model,
+                spiral_mcts_iterations=spiral_mcts_iterations,
+                spiral_max_depth=spiral_max_depth,
+                spiral_use_world_model=spiral_use_world_model,
+                mcp_cosmos_root=mcp_cosmos_root,
+            )
 
             get_data_tool = next(
                 (t for t in tools if t.name == "get_data"), None
@@ -256,7 +474,6 @@ async def run_benchmark_for_domain(
                             )
 
                         tlog("    Universe loaded successfully")
-                        assert isinstance(agent, LangGraphReActAgent)
                         agent._initial_data_handle = parsed_data["handle"]
                         agent._initial_data_peek = parsed_data
                         tlog(f"    Initial data handle: {agent._initial_data_handle}")
@@ -337,8 +554,33 @@ async def run_benchmark_for_domain(
     return results
 
 
-def _get_agent(capability_id: int, llm, tools, top_k_tools: int = 0, max_iterations: Optional[int] = None) -> AgentInterface:
+def _get_agent(
+    capability_id: int,
+    llm,
+    tools,
+    top_k_tools: int = 0,
+    max_iterations: Optional[int] = None,
+    agent_type: str = "react",
+    spiral_model: str = "watsonx__gpt-120b",
+    spiral_simulation_model: Optional[str] = None,
+    spiral_mcts_iterations: int = 50,
+    spiral_max_depth: int = 8,
+    spiral_use_world_model: bool = True,
+    mcp_cosmos_root: Path = DEFAULT_MCP_COSMOS_ROOT,
+) -> AgentInterface:
     """Return the appropriate agent for the given capability_id."""
+    if agent_type == "spiral":
+        return SPIRALAgentVAKRAWrapper(
+            tools=tools,
+            top_k_tools=top_k_tools,
+            generation_model_name=spiral_model,
+            simulation_model_name=spiral_simulation_model,
+            mcts_iterations=spiral_mcts_iterations,
+            max_depth=spiral_max_depth,
+            use_world_model=spiral_use_world_model,
+            cosmos_root=mcp_cosmos_root,
+        )
+
     kwargs = dict(llm=llm, tools=tools, top_k_tools=top_k_tools)
     if max_iterations is not None:
         kwargs["max_iterations"] = max_iterations
@@ -357,6 +599,13 @@ async def run_capability(
     domains: Optional[List[str]] = None,
     top_k_tools: int = 0,
     max_iterations: Optional[int] = None,
+    agent_type: str = "react",
+    spiral_model: str = "watsonx__gpt-120b",
+    spiral_simulation_model: Optional[str] = None,
+    spiral_mcts_iterations: int = 50,
+    spiral_max_depth: int = 8,
+    spiral_use_world_model: bool = True,
+    mcp_cosmos_root: Path = DEFAULT_MCP_COSMOS_ROOT,
     restart: bool = False,
     temperature: float = 0.0,
 ) -> List[BenchmarkResult]:
@@ -399,7 +648,11 @@ async def run_capability(
             tlog(f"Restart mode: skipping {len(completed)} already-completed domain(s): {sorted(completed)}")
             domain_list = [d for d in domain_list if d not in completed]
 
-    llm = create_llm(provider=provider, model=model, temperature=temperature)
+    llm = None if agent_type == "spiral" else create_llm(
+        provider=provider,
+        model=model,
+        temperature=temperature,
+    )
 
     # Process each domain, writing output incrementally
     all_results: List[BenchmarkResult] = []
@@ -416,6 +669,13 @@ async def run_capability(
             max_samples=max_samples_per_domain,
             top_k_tools=top_k_tools,
             max_iterations=max_iterations,
+            agent_type=agent_type,
+            spiral_model=spiral_model,
+            spiral_simulation_model=spiral_simulation_model,
+            spiral_mcts_iterations=spiral_mcts_iterations,
+            spiral_max_depth=spiral_max_depth,
+            spiral_use_world_model=spiral_use_world_model,
+            mcp_cosmos_root=mcp_cosmos_root,
             tlog=tlog,
         )
         all_results.extend(domain_results)
@@ -513,6 +773,48 @@ def main():
         help="Maximum agent iterations per query (default: 10 for task 1, provider default otherwise)"
     )
     parser.add_argument(
+        "--agent",
+        type=str,
+        choices=["react", "spiral"],
+        default="react",
+        help="Agent implementation to run (default: react)"
+    )
+    parser.add_argument(
+        "--spiral-model",
+        type=str,
+        default="watsonx__gpt-120b",
+        help="MCP-Cosmos SPIRAL generation model (default: watsonx__gpt-120b)"
+    )
+    parser.add_argument(
+        "--spiral-simulation-model",
+        type=str,
+        default=None,
+        help="SPIRAL world-model simulation model (default: --spiral-model)"
+    )
+    parser.add_argument(
+        "--spiral-mcts-iterations",
+        type=int,
+        default=50,
+        help="SPIRAL MCTS iterations per query (default: 50)"
+    )
+    parser.add_argument(
+        "--spiral-max-depth",
+        type=int,
+        default=8,
+        help="SPIRAL search max depth (default: 8)"
+    )
+    parser.add_argument(
+        "--spiral-no-world-model",
+        action="store_true",
+        help="Disable the LLM world model used for SPIRAL simulation"
+    )
+    parser.add_argument(
+        "--mcp-cosmos-root",
+        type=str,
+        default=str(DEFAULT_MCP_COSMOS_ROOT),
+        help=f"Path to MCP-Cosmos checkout (default: {DEFAULT_MCP_COSMOS_ROOT})"
+    )
+    parser.add_argument(
         "--restart",
         action="store_true",
         help=(
@@ -595,6 +897,13 @@ def main():
             domains=args.domain,
             top_k_tools=args.top_k_tools,
             max_iterations=args.max_iterations,
+            agent_type=args.agent,
+            spiral_model=args.spiral_model,
+            spiral_simulation_model=args.spiral_simulation_model,
+            spiral_mcts_iterations=args.spiral_mcts_iterations,
+            spiral_max_depth=args.spiral_max_depth,
+            spiral_use_world_model=not args.spiral_no_world_model,
+            mcp_cosmos_root=Path(args.mcp_cosmos_root),
             restart=args.restart,
             temperature=args.temperature
         )
