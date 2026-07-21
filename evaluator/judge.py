@@ -22,6 +22,28 @@ class JudgeValidationError(ValueError):
     """Raised when a judge returns an unexpected/invalid score."""
     pass
 
+class ChatGroq(ChatOpenAI):
+    """Groq-backed OpenAI-compatible chat model."""
+
+    def __init__(self, config: dict):
+        model_name = config.get("model_name", "openai/gpt-oss-120b")
+        end_point = config.get("end_point", "https://api.groq.com/openai")
+
+        api_key = os.getenv("API_KEY")
+        if api_key is None or api_key == "":
+            raise ValueError("API_KEY is required")
+
+        params = config.get("params", {})
+
+        groq_config = {}
+        groq_config.setdefault("model", model_name)
+        groq_config.setdefault("api_key", api_key)
+        groq_config.setdefault("base_url", end_point.rstrip("/") + "/v1")
+        groq_config.setdefault("temperature", 0)
+        groq_config.update(params)
+
+        super().__init__(**groq_config)
+
 class ChatRits(ChatOpenAI):
     """RITS chat model integration using langchain-openai."""
 
@@ -50,7 +72,23 @@ class LLMJudge:
     def __init__(self,
                 config: dict = {}):
         self.model_config=config
-        self.llm=ChatRits(self.model_config)
+        self.llm=self._build_llm(self.model_config)
+
+    def _build_llm(self, config: dict) -> ChatOpenAI:
+        backend = (
+            config.get("backend")
+            or config.get("provider")
+            or os.getenv("JUDGE_BACKEND")
+        )
+        if backend is None:
+            backend = "rits" if os.getenv("RITS_API_KEY") else "groq"
+
+        backend = backend.lower()
+        if backend == "rits":
+            return ChatRits(config)
+        if backend == "groq":
+            return ChatGroq(config)
+        raise ValueError(f"Unsupported judge backend: {backend!r}. Expected 'groq' or 'rits'.")
 
     def invoke(self, prompt:str) -> str:
         res = self.llm.invoke(prompt).content
