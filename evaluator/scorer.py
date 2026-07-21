@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from importlib import import_module
-from importlib.util import find_spec
+from importlib.util import module_from_spec, spec_from_file_location
+from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple
 from utils import ToolCall
 from judge import CorrectnessJudge, GroundednessJudge, LLMJudge, JudgeValidationError
@@ -10,11 +10,20 @@ from utils import JudgeInput
 from constant import N_TOOL_CALLS_PER_TURN, PRED_OUTPUT_KEY, PRED_OUTPUT_TURN_ID_KEY, PRED_OUTPUT_QUERY_KEY, PRED_OUTPUT_ANSWER_KEY, PRED_OUTPUT_SEQUENCE_KEY, GT_OUTPUT_KEY, GT_OUTPUT_TURN_ID_KEY, GT_OUTPUT_QUERY_KEY, GT_OUTPUT_ANSWER_KEY, GT_OUTPUT_SEQUENCE_KEY
 
 
-def _load_policy_judge() -> Optional[Any]:
-    if find_spec("policy_judge") is None:
+def _load_policy_judge(policy_judge_path: Optional[str]) -> Optional[Any]:
+    if policy_judge_path is None:
         return None
 
-    policy_module = import_module("policy_judge")
+    path = Path(policy_judge_path).expanduser()
+    if not path.exists():
+        raise FileNotFoundError(f"PolicyJudge file not found: {path}")
+
+    spec = spec_from_file_location("policy_judge", path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Could not load PolicyJudge file: {path}")
+
+    policy_module = module_from_spec(spec)
+    spec.loader.exec_module(policy_module)
     judge_cls = getattr(policy_module, "PolicyAdherenceJudge", None)
     if judge_cls is None:
         judge_cls = getattr(policy_module, "PolicyAdheranceJudge")
@@ -36,6 +45,7 @@ class TurnScorerConfig:
     """
     capability: str
     domain: str
+    policy_judge_path: Optional[str] = None
 
 class TurnScorer:
     """
@@ -49,7 +59,7 @@ class TurnScorer:
         self.correctness_judge=correctness_judge
         self.groundedness_judge=groundedness_judge
         self.exactmatch_judge=exactmatch_judge
-        self.policy_judge=_load_policy_judge()
+        self.policy_judge=_load_policy_judge(self.cfg.policy_judge_path)
 
     def compare(self, query: str, additional_instructions:str
                 , gt_answer: str, pred_answer: str
