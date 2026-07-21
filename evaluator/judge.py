@@ -81,7 +81,7 @@ class LLMJudge:
             or os.getenv("JUDGE_BACKEND")
         )
         if backend is None:
-            backend = "rits" if os.getenv("RITS_API_KEY") else "groq"
+            backend = "rits" # Use RITS as default judge backend if not specified
 
         backend = backend.lower()
         if backend == "rits":
