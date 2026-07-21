@@ -234,6 +234,7 @@ async def execute_tools_batch(
     session: ClientSession,
     dialogue_tools_batch: List[List[List[Dict[str, Any]]]],
     schema_map: Optional[Dict[str, Any]],
+    is_gt: bool = False,
 ) -> List[List[List[Any]]]:
     """
     Execute a batch of tool calls using a raw MCP session, with schema-based
@@ -261,6 +262,14 @@ async def execute_tools_batch(
             for tool in turn_tools:
                 tool_name = tool["name"]
                 raw_args = tool.get("arguments", {}) or {}
+                if is_gt:
+                    if (("input_value" in raw_args.keys()) or "data_label" in raw_args.keys()) and len(turn_responses)>0:
+                        if "handle" in turn_responses[-1]:
+                            previous_response = json.loads(turn_responses[-1])
+                            if "input_value" in raw_args.keys():
+                                raw_args["input_value"] = previous_response["results"]
+                            if "data_label" in raw_args.keys():
+                                raw_args["data_label"] = previous_response["handle"]
 
                 # Parse JSON string args if needed (JSON round-trip safety)
                 if isinstance(raw_args, str):

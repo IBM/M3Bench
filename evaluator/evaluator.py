@@ -237,9 +237,12 @@ async def evaluate_domain(
                     _update_dialogue_toolcall_for_get_data(pr_raw, uuid, skip_initialize_active_data=False)
 
             mcp_batch_responses_pred = await execute_tools_batch(session, batch_tools_pred, schema_map)
-            mcp_batch_responses_gt = None
-            if capability_name != "capability_bi_apis":
-                mcp_batch_responses_gt = await execute_tools_batch(session, batch_tools_gt, schema_map)
+            mcp_batch_responses_gt = await execute_tools_batch(
+                session,
+                batch_tools_gt,
+                schema_map,
+                is_gt=capability_name == "capability_bi_apis",
+            )
 
             # Score each paired dialogue
             for idx, (gt_raw, pr_raw) in enumerate(
