@@ -88,6 +88,9 @@ def inject_mcp_responses(
         turn_resps = mcp_dialogue_responses[i] if i < len(mcp_dialogue_responses) else []
         turn_resps = _ensure_list(turn_resps)
 
+        if type == "pred" and len(tool_calls) > len(turn_resps):
+            tool_calls = tool_calls[-len(turn_resps):] if turn_resps else []
+
         if "multiturn" in capability_name:
             for tool in tool_calls:
                 if "query_" in tool["name"]:
@@ -110,8 +113,8 @@ def inject_mcp_responses(
                         if "query_" in tool["name"]:
                             try:
                                 truncated_responses[idx] = [item["text"] for item in json.loads(truncated_responses[idx])["results"]] # Only text in chunks is retained
-                            except:
-                                truncated_responses[idx] = [] # For incorrect tool calls
+                            except Exception as e:
+                                truncated_responses[idx] = [f"Error processing response: {str(e)}"]
                     seq["tool_response"] = truncated_responses
             else:
                 if len(turn_resps) >= n:
