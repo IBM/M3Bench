@@ -78,8 +78,17 @@ class TurnScorer:
         #         }
         #         return score, details
 
-        exactmatch=self.exactmatch_judge.judge(inp=input)
-        exactmatch_score, exactmatch_explanation=float(exactmatch.score), exactmatch.explanation
+        unanswerable_no_tool_case = (
+            len(input.pred_tool_calls) == 0
+            and "i can not answer" in input.gt_answer.lower()
+            and len(input.gt_tool_calls) == 0
+        )
+        if unanswerable_no_tool_case:
+            exactmatch_score = 1.0
+            exactmatch_explanation = "Special case applied - GT indicates unanswerable and no tool calls made, granting full exact match credit."
+        else:
+            exactmatch=self.exactmatch_judge.judge(inp=input)
+            exactmatch_score, exactmatch_explanation=float(exactmatch.score), exactmatch.explanation
         if exactmatch_score==0.0:
             correctness=self.correctness_judge.judge(inp=input)
             answer_score, answer_explanation=float(correctness.score), correctness.explanation
@@ -96,6 +105,27 @@ class TurnScorer:
                 }
                 return score, details
             elif answer_score==1.0:
+                if (
+                    "multiturn" in self.cfg.capability
+                    and "i can not answer" in input.gt_answer.lower()
+                    and (len(input.pred_tool_calls) == 0 or input.pred_answer in ["", " "])
+                ):
+                    score = 1.0
+                    details = {
+                        "gt_steps": len(gt),
+                        "pred_steps": len(pred),
+                        "extra_steps": max(0, extra_steps),
+                        "exactmatch_score": exactmatch_score,
+                        "answer_score": answer_score,
+                        "groundedness_score": 1.0,
+                        "score_explanation": {
+                            "answer": answer_explanation,
+                            "exactmatch": exactmatch_explanation,
+                            "groundedness": "Special case applied - GT indicates unanswerable and no tool calls made, granting full groundedness credit.",
+                        },
+                    }
+                    return score, details
+
                 groundedness = self.groundedness_judge.judge(inp=input)
                 groundedness_score, groundedness_explanation = float(groundedness.score), groundedness.explanation
                 score = groundedness_score
@@ -115,6 +145,27 @@ class TurnScorer:
                     f"Expected 0.0 or 1.0. Explanation: {answer_explanation!r}"
                 )
         elif exactmatch_score==1.0:
+            if (
+                "multiturn" in self.cfg.capability
+                and "i can not answer" in input.gt_answer.lower()
+                and (len(input.pred_tool_calls) == 0 or input.pred_answer in ["", " "])
+            ):
+                score = 1.0
+                details = {
+                    "gt_steps": len(gt),
+                    "pred_steps": len(pred),
+                    "extra_steps": max(0, extra_steps),
+                    "exactmatch_score": exactmatch_score,
+                    "answer_score": None,
+                    "groundedness_score": 1.0,
+                    "score_explanation": {
+                        "answer": None,
+                        "exactmatch": exactmatch_explanation,
+                        "groundedness": "Special case applied - GT indicates unanswerable and no tool calls made, granting full groundedness credit.",
+                    },
+                }
+                return score, details
+
             groundedness = self.groundedness_judge.judge(inp=input)
             groundedness_score, groundedness_explanation = float(groundedness.score), groundedness.explanation
             score = groundedness_score
