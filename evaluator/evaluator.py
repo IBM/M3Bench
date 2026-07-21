@@ -107,7 +107,10 @@ def _prepend_get_data_to_batch(
             result.append(dialogue_tools)
             continue
         first_turn = list(dialogue_tools[0])
-        if skip_initialize_active_data and first_turn and first_turn[0].get("name") == "initialize_active_data":
+        if skip_initialize_active_data and first_turn and (
+            first_turn[0].get("name") == "initialize_active_data"
+            or first_turn[0].get("name") == "get_data"
+        ):
             first_turn = first_turn[1:]
         first_turn = [{"name": "get_data", "arguments": {"tool_universe_id": uuid}}] + first_turn
         result.append([first_turn] + list(dialogue_tools[1:]))
@@ -234,7 +237,9 @@ async def evaluate_domain(
                     _update_dialogue_toolcall_for_get_data(pr_raw, uuid, skip_initialize_active_data=False)
 
             mcp_batch_responses_pred = await execute_tools_batch(session, batch_tools_pred, schema_map)
-            mcp_batch_responses_gt = await execute_tools_batch(session, batch_tools_gt, schema_map)
+            mcp_batch_responses_gt = None
+            if capability_name != "capability_bi_apis":
+                mcp_batch_responses_gt = await execute_tools_batch(session, batch_tools_gt, schema_map)
 
             # Score each paired dialogue
             for idx, (gt_raw, pr_raw) in enumerate(
@@ -244,7 +249,8 @@ async def evaluate_domain(
 
                 # Inject fresh responses so groundedness judge uses tool outputs
                 inject_mcp_responses(pr_raw, mcp_batch_responses_pred[idx], type="pred", capability_name=capability_name)
-                inject_mcp_responses(gt_raw, mcp_batch_responses_gt[idx], type="gt",capability_name=capability_name)
+                if capability_name != "capability_bi_apis" and mcp_batch_responses_gt is not None:
+                    inject_mcp_responses(gt_raw, mcp_batch_responses_gt[idx], type="gt",capability_name=capability_name)
 
                 # Score and store details
                 dialogue_score, dialogue_details = dialogue_scorer.score(
