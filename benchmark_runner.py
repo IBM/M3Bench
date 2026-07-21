@@ -150,12 +150,32 @@ load_dotenv()
 DEFAULT_MCP_CONFIG = str(
     Path(__file__).parent / "benchmark" / "mcp_connection_config.yaml"
 )
-DEFAULT_MCP_COSMOS_ROOT = Path(
-    os.environ.get(
-        "MCP_COSMOS_ROOT",
-        str(Path(__file__).parents[2] / "MCP-Cosmos"),
+
+
+def _resolve_default_mcp_cosmos_root() -> Path:
+    """Find MCP-Cosmos across local and container checkout layouts."""
+    env_root = os.environ.get("MCP_COSMOS_ROOT")
+    candidates = []
+    if env_root:
+        candidates.append(Path(env_root))
+
+    vakra_path = Path(__file__).resolve()
+    candidates.extend(
+        [
+            vakra_path.parents[2] / "MCP-Cosmos",
+            vakra_path.parents[3] / "MCP-Cosmos",
+            Path("/root/MCP-Cosmos"),
+            Path("/MCP-Cosmos"),
+        ]
     )
-)
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return candidates[0]
+
+
+DEFAULT_MCP_COSMOS_ROOT = _resolve_default_mcp_cosmos_root()
 # Timeout for agent execution (seconds)
 AGENT_TIMEOUT_SECONDS = float(os.environ.get("AGENT_TIMEOUT_SECONDS", "300"))
 
