@@ -1,11 +1,24 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from importlib import import_module
+from importlib.util import find_spec
 from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple
 from utils import ToolCall
 from judge import CorrectnessJudge, GroundednessJudge, LLMJudge, JudgeValidationError
 from utils import JudgeInput
 from constant import N_TOOL_CALLS_PER_TURN, PRED_OUTPUT_KEY, PRED_OUTPUT_TURN_ID_KEY, PRED_OUTPUT_QUERY_KEY, PRED_OUTPUT_ANSWER_KEY, PRED_OUTPUT_SEQUENCE_KEY, GT_OUTPUT_KEY, GT_OUTPUT_TURN_ID_KEY, GT_OUTPUT_QUERY_KEY, GT_OUTPUT_ANSWER_KEY, GT_OUTPUT_SEQUENCE_KEY
+
+
+def _load_policy_judge() -> Optional[Any]:
+    if find_spec("policy_judge") is None:
+        return None
+
+    policy_module = import_module("policy_judge")
+    judge_cls = getattr(policy_module, "PolicyAdherenceJudge", None)
+    if judge_cls is None:
+        judge_cls = getattr(policy_module, "PolicyAdheranceJudge")
+    return judge_cls()
 
 # -----------------------------
 # Output Scorer
@@ -36,7 +49,7 @@ class TurnScorer:
         self.correctness_judge=correctness_judge
         self.groundedness_judge=groundedness_judge
         self.exactmatch_judge=exactmatch_judge
-        
+        self.policy_judge=_load_policy_judge()
 
     def compare(self, query: str, additional_instructions:str
                 , gt_answer: str, pred_answer: str
@@ -60,23 +73,23 @@ class TurnScorer:
         # Scoring Turns
         extra_steps=len(pred)-len(gt)
 
-        # Check for policy adherance
-        # if "multiturn" in self.cfg.capability:
-        #     policy = self.policy_judge.judge(inp=input)
-        #     policy_score, policy_explanation = float(policy.score), policy.explanation
-        #     if policy_score==0.0:
-        #         score = policy_score
-        #         details = {
-        #             "gt_steps": len(gt),
-        #             "pred_steps": len(pred),
-        #             "extra_steps": max(0, extra_steps),
-        #             "policy_adherance_score": policy_score,
-        #             "exactmatch_score": None,
-        #             "answer_score": None,
-        #             "groundedness_score": None,
-        #             "score_explanation": {"policy": policy_explanation, "answer": None, "exactmatch": None, "groundedness":None},
-        #         }
-        #         return score, details
+        # Check for policy adherence when an internal policy_judge.py file is present.
+        if self.policy_judge is not None and "multiturn" in self.cfg.capability:
+            policy = self.policy_judge.judge(inp=input)
+            policy_score, policy_explanation = float(policy.score), policy.explanation
+            if policy_score==0.0:
+                score = policy_score
+                details = {
+                    "gt_steps": len(gt),
+                    "pred_steps": len(pred),
+                    "extra_steps": max(0, extra_steps),
+                    "policy_adherance_score": policy_score,
+                    "exactmatch_score": None,
+                    "answer_score": None,
+                    "groundedness_score": None,
+                    "score_explanation": {"policy": policy_explanation, "answer": None, "exactmatch": None, "groundedness":None},
+                }
+                return score, details
 
         unanswerable_no_tool_case = (
             len(input.pred_tool_calls) == 0
