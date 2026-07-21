@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple
 from utils import ToolCall
 from judge import CorrectnessJudge, GroundednessJudge, LLMJudge, JudgeValidationError
 from utils import JudgeInput
-from constant import PRED_OUTPUT_KEY, PRED_OUTPUT_TURN_ID_KEY, PRED_OUTPUT_QUERY_KEY, PRED_OUTPUT_ANSWER_KEY, PRED_OUTPUT_SEQUENCE_KEY, GT_OUTPUT_KEY, GT_OUTPUT_TURN_ID_KEY, GT_OUTPUT_QUERY_KEY, GT_OUTPUT_ANSWER_KEY, GT_OUTPUT_SEQUENCE_KEY
+from constant import N_TOOL_CALLS_PER_TURN, PRED_OUTPUT_KEY, PRED_OUTPUT_TURN_ID_KEY, PRED_OUTPUT_QUERY_KEY, PRED_OUTPUT_ANSWER_KEY, PRED_OUTPUT_SEQUENCE_KEY, GT_OUTPUT_KEY, GT_OUTPUT_TURN_ID_KEY, GT_OUTPUT_QUERY_KEY, GT_OUTPUT_ANSWER_KEY, GT_OUTPUT_SEQUENCE_KEY
 
 # -----------------------------
 # Output Scorer
@@ -223,8 +223,10 @@ class DialogueScorer:
 
             pred_turn = pred_by_id.get(turn_id, None)
             pred_answer = self._stringify_pred_answer(pred_turn.get(PRED_OUTPUT_ANSWER_KEY, ""))
-            pred_calls = pred_turn.get(PRED_OUTPUT_SEQUENCE_KEY, {}).get("tool_call",[])
-            pred_responses = self._extract_tool_responses(pred_turn.get(PRED_OUTPUT_SEQUENCE_KEY, {}).get("tool_response",[]))
+            pred_sequence = pred_turn.get(PRED_OUTPUT_SEQUENCE_KEY, {}) or {}
+            pred_calls_all = pred_sequence.get("tool_call", []) or []
+            pred_calls = pred_calls_all[-N_TOOL_CALLS_PER_TURN:] if isinstance(pred_calls_all, list) else []
+            pred_responses = self._extract_tool_responses(pred_sequence.get("tool_response", []))[-N_TOOL_CALLS_PER_TURN:]
 
             score, details = self.turn_scorer.compare(
                 query=query,

@@ -6,6 +6,7 @@ import json
 from copy import deepcopy
 from prompt import GroundednessPrompt, CorrectnessPrompt
 from utils import JudgeInput, JudgeOutput
+from constant import N_TOOL_CALLS_PER_TURN
 from langchain_openai import ChatOpenAI
 from typing import Any, Dict, Optional, Tuple
 
@@ -13,9 +14,6 @@ _LABEL_RE = re.compile(r"\b(yes|partial|no|unsure)\b", re.IGNORECASE)
 _CONCLUSION_RE = re.compile(r"<conclusion>\s*(.*?)\s*</conclusion>", re.IGNORECASE | re.DOTALL)
 
 _SCORE_MAP = {"yes": 1.0, "partial": 0.0, "no": 0.0, "unsure": 0.0}
-
-N_TOOL_CALLS_PER_TURN=20
-
 
 class JudgeOutputParseError(ValueError):
     pass

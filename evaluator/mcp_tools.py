@@ -22,7 +22,10 @@ ToolSpec = Dict[str, Any]
 # Prediction dialogue helpers
 # -----------------------------
 
-def extract_toolcalls_for_mcp(pred_dialogue: Dict[str, Any]) -> List[List[Dict[str, Any]]]:
+def extract_toolcalls_for_mcp(
+    pred_dialogue: Dict[str, Any],
+    limit_last_n: Optional[int] = None,
+) -> List[List[Dict[str, Any]]]:
     """
     FastAPIMCPToolClient.call_mcp_tools expects:
       tools = [
@@ -49,6 +52,8 @@ def extract_toolcalls_for_mcp(pred_dialogue: Dict[str, Any]) -> List[List[Dict[s
             if isinstance(raw_tc, dict) and "name" in raw_tc:
                 turn_tools.append(
                     {"name": raw_tc["name"], "arguments": raw_tc.get("arguments", {})})
+        if limit_last_n is not None:
+            turn_tools = turn_tools[-limit_last_n:]
         dialogue_tools.append(turn_tools)
     return dialogue_tools
 

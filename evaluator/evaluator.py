@@ -26,6 +26,7 @@ from scorer import (
     TurnScorerConfig,
 )
 from constant import PRED_OUTPUT_KEY, PRED_OUTPUT_SEQUENCE_KEY
+from constant import N_TOOL_CALLS_PER_TURN
 from utils import read_domain_file, pair_dialogues_by_uuid
 
 CAPABILITY_MCP_TOOL_MAP={
@@ -219,7 +220,7 @@ async def evaluate_domain(
             schema_map = {tool.name: tool.inputSchema for tool in tools_result.tools}
 
             # Batch execute tools
-            batch_tools_pred = [extract_toolcalls_for_mcp(pr) for _, pr in paired]
+            batch_tools_pred = [extract_toolcalls_for_mcp(pr, limit_last_n=N_TOOL_CALLS_PER_TURN) for _, pr in paired]
             batch_tools_gt = [extract_toolcalls_for_mcp(gt) for gt, _ in paired]
 
             # capability_bi_apis: replace initialize_active_data with get_data (GT),
