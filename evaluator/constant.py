@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+N_TOOL_CALLS_PER_TURN=20
+
 # Predicted file keys
 PRED_UUID="uuid"
 PRED_DOMAIN="domain"

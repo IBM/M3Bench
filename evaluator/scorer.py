@@ -1,11 +1,33 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from importlib.util import module_from_spec, spec_from_file_location
+from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple
 from utils import ToolCall
 from judge import CorrectnessJudge, GroundednessJudge, LLMJudge, JudgeValidationError
 from utils import JudgeInput
-from constant import PRED_OUTPUT_KEY, PRED_OUTPUT_TURN_ID_KEY, PRED_OUTPUT_QUERY_KEY, PRED_OUTPUT_ANSWER_KEY, PRED_OUTPUT_SEQUENCE_KEY, GT_OUTPUT_KEY, GT_OUTPUT_TURN_ID_KEY, GT_OUTPUT_QUERY_KEY, GT_OUTPUT_ANSWER_KEY, GT_OUTPUT_SEQUENCE_KEY
+from constant import N_TOOL_CALLS_PER_TURN, PRED_OUTPUT_KEY, PRED_OUTPUT_TURN_ID_KEY, PRED_OUTPUT_QUERY_KEY, PRED_OUTPUT_ANSWER_KEY, PRED_OUTPUT_SEQUENCE_KEY, GT_OUTPUT_KEY, GT_OUTPUT_TURN_ID_KEY, GT_OUTPUT_QUERY_KEY, GT_OUTPUT_ANSWER_KEY, GT_OUTPUT_SEQUENCE_KEY
+
+
+def _load_policy_judge(policy_judge_path: Optional[str]) -> Optional[Any]:
+    if policy_judge_path is None:
+        return None
+
+    path = Path(policy_judge_path).expanduser()
+    if not path.exists():
+        raise FileNotFoundError(f"PolicyJudge file not found: {path}")
+
+    spec = spec_from_file_location("policy_judge", path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Could not load PolicyJudge file: {path}")
+
+    policy_module = module_from_spec(spec)
+    spec.loader.exec_module(policy_module)
+    judge_cls = getattr(policy_module, "PolicyAdherenceJudge", None)
+    if judge_cls is None:
+        judge_cls = getattr(policy_module, "PolicyAdheranceJudge")
+    return judge_cls()
 
 # -----------------------------
 # Output Scorer
@@ -23,6 +45,7 @@ class TurnScorerConfig:
     """
     capability: str
     domain: str
+    policy_judge_path: Optional[str] = None
 
 class TurnScorer:
     """
@@ -36,7 +59,7 @@ class TurnScorer:
         self.correctness_judge=correctness_judge
         self.groundedness_judge=groundedness_judge
         self.exactmatch_judge=exactmatch_judge
-        
+        self.policy_judge=_load_policy_judge(self.cfg.policy_judge_path)
 
     def compare(self, query: str, additional_instructions:str
                 , gt_answer: str, pred_answer: str
@@ -60,26 +83,35 @@ class TurnScorer:
         # Scoring Turns
         extra_steps=len(pred)-len(gt)
 
-        # Check for policy adherance
-        # if "multiturn" in self.cfg.capability:
-        #     policy = self.policy_judge.judge(inp=input)
-        #     policy_score, policy_explanation = float(policy.score), policy.explanation
-        #     if policy_score==0.0:
-        #         score = policy_score
-        #         details = {
-        #             "gt_steps": len(gt),
-        #             "pred_steps": len(pred),
-        #             "extra_steps": max(0, extra_steps),
-        #             "policy_adherance_score": policy_score,
-        #             "exactmatch_score": None,
-        #             "answer_score": None,
-        #             "groundedness_score": None,
-        #             "score_explanation": {"policy": policy_explanation, "answer": None, "exactmatch": None, "groundedness":None},
-        #         }
-        #         return score, details
+        # Check for policy adherence when an internal policy_judge.py file is present.
+        if self.policy_judge is not None and "multiturn" in self.cfg.capability:
+            policy = self.policy_judge.judge(inp=input)
+            policy_score, policy_explanation = float(policy.score), policy.explanation
+            if policy_score==0.0:
+                score = policy_score
+                details = {
+                    "gt_steps": len(gt),
+                    "pred_steps": len(pred),
+                    "extra_steps": max(0, extra_steps),
+                    "policy_adherance_score": policy_score,
+                    "exactmatch_score": None,
+                    "answer_score": None,
+                    "groundedness_score": None,
+                    "score_explanation": {"policy": policy_explanation, "answer": None, "exactmatch": None, "groundedness":None},
+                }
+                return score, details
 
-        exactmatch=self.exactmatch_judge.judge(inp=input)
-        exactmatch_score, exactmatch_explanation=float(exactmatch.score), exactmatch.explanation
+        unanswerable_no_tool_case = (
+            len(input.pred_tool_calls) == 0
+            and "i can not answer" in input.gt_answer.lower()
+            and len(input.gt_tool_calls) == 0
+        )
+        if unanswerable_no_tool_case:
+            exactmatch_score = 1.0
+            exactmatch_explanation = "Special case applied - GT indicates unanswerable and no tool calls made, granting full exact match credit."
+        else:
+            exactmatch=self.exactmatch_judge.judge(inp=input)
+            exactmatch_score, exactmatch_explanation=float(exactmatch.score), exactmatch.explanation
         if exactmatch_score==0.0:
             correctness=self.correctness_judge.judge(inp=input)
             answer_score, answer_explanation=float(correctness.score), correctness.explanation
@@ -96,6 +128,27 @@ class TurnScorer:
                 }
                 return score, details
             elif answer_score==1.0:
+                if (
+                    "multiturn" in self.cfg.capability
+                    and "i can not answer" in input.gt_answer.lower()
+                    and (len(input.pred_tool_calls) == 0 or input.pred_answer in ["", " "])
+                ):
+                    score = 1.0
+                    details = {
+                        "gt_steps": len(gt),
+                        "pred_steps": len(pred),
+                        "extra_steps": max(0, extra_steps),
+                        "exactmatch_score": exactmatch_score,
+                        "answer_score": answer_score,
+                        "groundedness_score": 1.0,
+                        "score_explanation": {
+                            "answer": answer_explanation,
+                            "exactmatch": exactmatch_explanation,
+                            "groundedness": "Special case applied - GT indicates unanswerable and no tool calls made, granting full groundedness credit.",
+                        },
+                    }
+                    return score, details
+
                 groundedness = self.groundedness_judge.judge(inp=input)
                 groundedness_score, groundedness_explanation = float(groundedness.score), groundedness.explanation
                 score = groundedness_score
@@ -115,6 +168,27 @@ class TurnScorer:
                     f"Expected 0.0 or 1.0. Explanation: {answer_explanation!r}"
                 )
         elif exactmatch_score==1.0:
+            if (
+                "multiturn" in self.cfg.capability
+                and "i can not answer" in input.gt_answer.lower()
+                and (len(input.pred_tool_calls) == 0 or input.pred_answer in ["", " "])
+            ):
+                score = 1.0
+                details = {
+                    "gt_steps": len(gt),
+                    "pred_steps": len(pred),
+                    "extra_steps": max(0, extra_steps),
+                    "exactmatch_score": exactmatch_score,
+                    "answer_score": None,
+                    "groundedness_score": 1.0,
+                    "score_explanation": {
+                        "answer": None,
+                        "exactmatch": exactmatch_explanation,
+                        "groundedness": "Special case applied - GT indicates unanswerable and no tool calls made, granting full groundedness credit.",
+                    },
+                }
+                return score, details
+
             groundedness = self.groundedness_judge.judge(inp=input)
             groundedness_score, groundedness_explanation = float(groundedness.score), groundedness.explanation
             score = groundedness_score
@@ -221,10 +295,12 @@ class DialogueScorer:
             gt_calls = gt_turn.get(GT_OUTPUT_SEQUENCE_KEY, {}).get("tool_call",[])
             gt_responses = self._extract_tool_responses(gt_turn.get(GT_OUTPUT_SEQUENCE_KEY, {}).get("tool_response",[]))
 
-            pred_turn = pred_by_id.get(turn_id, None)
+            pred_turn = pred_by_id.get(turn_id, pred_turns[-1]) # fallback to last predicted turn if turn_id not found
             pred_answer = self._stringify_pred_answer(pred_turn.get(PRED_OUTPUT_ANSWER_KEY, ""))
-            pred_calls = pred_turn.get(PRED_OUTPUT_SEQUENCE_KEY, {}).get("tool_call",[])
-            pred_responses = self._extract_tool_responses(pred_turn.get(PRED_OUTPUT_SEQUENCE_KEY, {}).get("tool_response",[]))
+            pred_sequence = pred_turn.get(PRED_OUTPUT_SEQUENCE_KEY, {}) or {}
+            pred_calls_all = pred_sequence.get("tool_call", []) or []
+            pred_calls = pred_calls_all[-N_TOOL_CALLS_PER_TURN:] if isinstance(pred_calls_all, list) else []
+            pred_responses = self._extract_tool_responses(pred_sequence.get("tool_response", []))[-N_TOOL_CALLS_PER_TURN:]
 
             score, details = self.turn_scorer.compare(
                 query=query,

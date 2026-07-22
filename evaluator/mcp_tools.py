@@ -22,7 +22,10 @@ ToolSpec = Dict[str, Any]
 # Prediction dialogue helpers
 # -----------------------------
 
-def extract_toolcalls_for_mcp(pred_dialogue: Dict[str, Any]) -> List[List[Dict[str, Any]]]:
+def extract_toolcalls_for_mcp(
+    pred_dialogue: Dict[str, Any],
+    limit_last_n: Optional[int] = None,
+) -> List[List[Dict[str, Any]]]:
     """
     FastAPIMCPToolClient.call_mcp_tools expects:
       tools = [
@@ -49,6 +52,8 @@ def extract_toolcalls_for_mcp(pred_dialogue: Dict[str, Any]) -> List[List[Dict[s
             if isinstance(raw_tc, dict) and "name" in raw_tc:
                 turn_tools.append(
                     {"name": raw_tc["name"], "arguments": raw_tc.get("arguments", {})})
+        if limit_last_n is not None:
+            turn_tools = turn_tools[-limit_last_n:]
         dialogue_tools.append(turn_tools)
     return dialogue_tools
 
@@ -83,6 +88,9 @@ def inject_mcp_responses(
         turn_resps = mcp_dialogue_responses[i] if i < len(mcp_dialogue_responses) else []
         turn_resps = _ensure_list(turn_resps)
 
+        if type == "pred" and len(tool_calls) > len(turn_resps):
+            tool_calls = tool_calls[-len(turn_resps):] if turn_resps else []
+
         if "multiturn" in capability_name:
             for tool in tool_calls:
                 if "query_" in tool["name"]:
@@ -105,8 +113,8 @@ def inject_mcp_responses(
                         if "query_" in tool["name"]:
                             try:
                                 truncated_responses[idx] = [item["text"] for item in json.loads(truncated_responses[idx])["results"]] # Only text in chunks is retained
-                            except:
-                                truncated_responses[idx] = [] # For incorrect tool calls
+                            except Exception as e:
+                                truncated_responses[idx] = [f"Error processing response: {str(e)}"]
                     seq["tool_response"] = truncated_responses
             else:
                 if len(turn_resps) >= n:
@@ -226,6 +234,7 @@ async def execute_tools_batch(
     session: ClientSession,
     dialogue_tools_batch: List[List[List[Dict[str, Any]]]],
     schema_map: Optional[Dict[str, Any]],
+    is_gt: bool = False,
 ) -> List[List[List[Any]]]:
     """
     Execute a batch of tool calls using a raw MCP session, with schema-based
@@ -253,6 +262,14 @@ async def execute_tools_batch(
             for tool in turn_tools:
                 tool_name = tool["name"]
                 raw_args = tool.get("arguments", {}) or {}
+                if is_gt:
+                    if (("input_value" in raw_args.keys()) or "data_label" in raw_args.keys()) and len(turn_responses)>0:
+                        if "handle" in turn_responses[-1]:
+                            previous_response = json.loads(turn_responses[-1])
+                            if "input_value" in raw_args.keys():
+                                raw_args["input_value"] = previous_response["results"]
+                            if "data_label" in raw_args.keys():
+                                raw_args["data_label"] = previous_response["handle"]
 
                 # Parse JSON string args if needed (JSON round-trip safety)
                 if isinstance(raw_args, str):
