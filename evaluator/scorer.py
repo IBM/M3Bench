@@ -221,7 +221,7 @@ class DialogueScorer:
             gt_calls = gt_turn.get(GT_OUTPUT_SEQUENCE_KEY, {}).get("tool_call",[])
             gt_responses = self._extract_tool_responses(gt_turn.get(GT_OUTPUT_SEQUENCE_KEY, {}).get("tool_response",[]))
 
-            pred_turn = pred_by_id.get(turn_id, None)
+            pred_turn = pred_by_id.get(turn_id, pred_turns[-1]) # If turn_id not found, fallback to last predicted turn
             pred_answer = self._stringify_pred_answer(pred_turn.get(PRED_OUTPUT_ANSWER_KEY, ""))
             pred_calls = pred_turn.get(PRED_OUTPUT_SEQUENCE_KEY, {}).get("tool_call",[])
             pred_responses = self._extract_tool_responses(pred_turn.get(PRED_OUTPUT_SEQUENCE_KEY, {}).get("tool_response",[]))
