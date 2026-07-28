@@ -61,7 +61,7 @@ differentiated only by `CAPABILITY_ID` and which pds subpaths they mount.
 | Registry / push secret | `icr.io/routing_namespace` / `icr-secret-1` |
 | Capability image | `icr.io/routing_namespace/vakra-benchmark:latest` |
 | Explorer image | `icr.io/routing_namespace/vakra-explorer:latest` |
-| COS instance | reused from `~/palette/.cos_creds.json` (apikey + HMAC keys) |
+| COS instance | your existing instance, via a service-credential JSON (`COS_CREDS_JSON`) |
 | COS bucket (NEW) | `vakra-benchmark-data-us-east` |
 | CE HMAC secret / data store | `vakra-cos-access` / `vakra-store` |
 | Apps | `vakra-cap1..4`, `vakra-explorer` |
@@ -73,8 +73,22 @@ All overridable via env — see `config.sh`.
 ## Prerequisites
 
 - `ibmcloud` CLI with the `code-engine` and `cloud-object-storage` plugins.
-- `rsync`, `uuidgen`, and either `uv` or `python3 -m venv`.
-- COS creds at `~/palette/.cos_creds.json` (already present; must contain `cos_hmac_keys`).
+- `rsync`, `uuidgen`, and `python3` (3.11/3.12).
+- A **COS service-credential JSON** — create it in IBM Cloud on your COS instance with
+  **Include HMAC Credential** enabled. Point `COS_CREDS_JSON` at the file (default
+  `~/.cos_creds.json`). It must contain `apikey`, the instance CRN, and HMAC keys:
+  ```json
+  {
+    "credentials": {
+      "apikey": "<iam-api-key>",
+      "resource_instance_id": "crn:v1:bluemix:public:cloud-object-storage:global:...::",
+      "cos_hmac_keys": {
+        "access_key_id": "<hmac-access-key-id>",
+        "secret_access_key": "<hmac-secret-access-key>"
+      }
+    }
+  }
+  ```
 
 ```bash
 ibmcloud login --sso
@@ -135,9 +149,9 @@ python3 deploy/ce/0_push_data_to_cos.py --stream
 **Verify what landed** (any Python with boto3):
 ```bash
 python3 - <<'PY'
-import json, boto3
+import json, os, boto3
 from botocore.client import Config
-c=json.load(open('/Users/anu/palette/.cos_creds.json'))['credentials']
+c=json.load(open(os.path.expanduser(os.environ.get("COS_CREDS_JSON","~/.cos_creds.json"))))['credentials']
 r="us-east"; b=f"vakra-benchmark-data-{r}"
 cli=boto3.client("s3",endpoint_url=f"https://s3.{r}.cloud-object-storage.appdomain.cloud",
   aws_access_key_id=c['cos_hmac_keys']['access_key_id'],

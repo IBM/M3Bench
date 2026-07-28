@@ -50,7 +50,7 @@ your laptop:  benchmark_runner.py --mcp-config …ce.yaml   (reads data/test/ lo
 
 Account conventions (reused, overridable in `config.sh`): region `us-east`, resource group
 `routing`, CE project `ce-project-routing`, registry `icr.io/routing_namespace` (push secret
-`icr-secret-1`), COS creds from `~/palette/.cos_creds.json`.
+`icr-secret-1`), and a COS service-credential JSON via `COS_CREDS_JSON` (default `~/.cos_creds.json`; see RUNBOOK.md → Prerequisites for the required fields).
 
 ---
 

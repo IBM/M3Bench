@@ -3,7 +3,7 @@
 # Step 1 — Create the NEW COS bucket, an HMAC access secret, and a Code Engine
 # persistent data store (pds) that mounts that bucket into the apps.
 #
-# Reuses the EXISTING palette COS instance (never creates a new instance, never
+# Reuses your EXISTING COS instance (never creates a new instance, never
 # touches other buckets). Safe to re-run: skips/refreshes what already exists.
 # ============================================================
 set -euo pipefail

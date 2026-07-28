@@ -2,7 +2,7 @@
 # ============================================================
 # Shared config for deploying VAKRA to IBM Code Engine + COS.
 #
-# Mirrors the conventions in ~/explorations/ibm-netlify-drop/deploy/config.sh so
+# Mirrors the team's existing Code Engine deploy conventions so
 # everything lands in the SAME account/region/project/registry you already use.
 # This is an ADDITIONAL, admin-only path — it never touches the local
 # docker-compose flow or any existing CE app / COS bucket.
@@ -24,8 +24,11 @@ export IMAGE_REF="${IMAGE_REF:-${IMAGE_REPO}:latest}"
 export EXPLORER_IMAGE_REPO="${REGISTRY_HOST}/${REGISTRY_NAMESPACE}/vakra-explorer"
 export EXPLORER_IMAGE_REF="${EXPLORER_IMAGE_REF:-${EXPLORER_IMAGE_REPO}:latest}"
 
-# ---- Object Storage (new bucket in the EXISTING palette COS instance) -------
-export COS_CREDS_JSON="${COS_CREDS_JSON:-$HOME/palette/.cos_creds.json}"
+# ---- Object Storage (new bucket in your existing COS instance) --------------
+# COS_CREDS_JSON points at a COS *service-credential* JSON (create it in IBM Cloud with
+# "Include HMAC Credential" enabled). It must contain credentials.{apikey,
+# resource_instance_id, cos_hmac_keys.{access_key_id,secret_access_key}}.
+export COS_CREDS_JSON="${COS_CREDS_JSON:-$HOME/.cos_creds.json}"
 # NEW bucket, dedicated to VAKRA. Globally-unique name — change if taken.
 export COS_BUCKET="${COS_BUCKET:-vakra-benchmark-data-$REGION}"
 export COS_ENDPOINT="${COS_ENDPOINT:-https://s3.$REGION.cloud-object-storage.appdomain.cloud}"
@@ -71,7 +74,7 @@ export APP_ROOT="$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )/../.." &> /dev/nu
 export CE_DIR="$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 export URLS_ENV_FILE="${URLS_ENV_FILE:-$CE_DIR/.ce_urls.env}"
 
-# ---- Pull COS creds (apikey + CRN + HMAC) out of the palette credential -----
+# ---- Pull COS creds (apikey + CRN + HMAC) out of the credential JSON --------
 if [[ -f "$COS_CREDS_JSON" ]]; then
   export COS_API_KEY="$(python3 -c "import json;c=json.load(open('$COS_CREDS_JSON'))['credentials'];print(c['apikey'])" 2>/dev/null)"
   export COS_INSTANCE_CRN="$(python3 -c "import json;c=json.load(open('$COS_CREDS_JSON'))['credentials'];print(c['resource_instance_id'])" 2>/dev/null)"

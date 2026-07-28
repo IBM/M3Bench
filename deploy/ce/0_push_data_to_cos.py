@@ -15,7 +15,7 @@ to the COS bucket with the SAME layout the containers expect:
 Idempotent: objects whose size already matches are skipped.
 
 Prereqs:  pip install boto3        (only needed on the machine that pushes)
-          COS creds in ~/palette/.cos_creds.json (HMAC keys)  — read by config.sh
+          COS service-credential JSON at $COS_CREDS_JSON (default ~/.cos_creds.json)
 
 Usage:
     # from repo root
@@ -50,7 +50,7 @@ UPLOAD_MAP = {
 
 
 def _cos_creds():
-    creds_path = Path(os.environ.get("COS_CREDS_JSON", str(Path.home() / "palette" / ".cos_creds.json")))
+    creds_path = Path(os.environ.get("COS_CREDS_JSON", str(Path.home() / ".cos_creds.json")))
     # Prefer env (exported by config.sh); fall back to the creds JSON directly.
     endpoint = os.environ.get("COS_ENDPOINT")
     bucket = os.environ.get("COS_BUCKET")
