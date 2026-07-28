@@ -37,7 +37,7 @@ class RITSChatModel(BaseChatModel):
         "mistral-large-3-675b-2512-fp4": "mistralai/Mistral-Large-3-675B-Instruct-2512-NVFP4",
         "glm-5-1": "",
         "moonshotai-kimi-k2-5":"moonshotai/Kimi-K2.5",
-        "gpt-oss-120b": "openai/gpt-oss-120b",
+        "gpt-oss-120b": "openai/gpt-oss-120b-a100",
         # smaller models
         "llama-3-3-70b-instruct": "meta-llama/llama-3-3-70b-instruct",
         "qwen2-5-72b-instruct": "Qwen/Qwen2.5-72B-Instruct",

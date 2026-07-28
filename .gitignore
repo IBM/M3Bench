@@ -44,3 +44,5 @@ parlant-data/
 # But still ignore any __pycache__ inside helpers/data
 helpers/data/**/__pycache__/
 gpt-oss-120b*
+# Code Engine deploy: generated URLs (deployment-specific, not for commit)
+deploy/ce/.ce_urls.env

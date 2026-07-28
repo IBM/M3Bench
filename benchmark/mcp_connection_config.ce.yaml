@@ -1,0 +1,34 @@
+# =============================================================================
+# MCP connection config — CODE ENGINE (HTTP) variant.
+#
+# Use this to benchmark against the deployed VAKRA apps instead of local
+# containers, WITHOUT changing benchmark_runner.py:
+#
+#   1. Deploy:   cd deploy/ce && ./3_deploy_apps.sh          (writes .ce_urls.env)
+#   2. Point at CE:  source deploy/ce/.ce_urls.env
+#   3. Run:      python benchmark_runner.py --capability_id 2 --domain address \
+#                    --mcp-config benchmark/mcp_connection_config.ce.yaml
+#
+# The ${VAKRA_CAPn_URL} vars are filled in by deploy/ce/3_deploy_apps.sh and
+# expanded when this file is loaded (see load_mcp_config). The literal {domain}
+# is filled per-run by the client, so each connection is scoped to ONE domain —
+# the CE bridge spawns a subprocess pinned to MCP_DOMAIN=<domain>, so list_tools()
+# returns only that domain's tools (identical to the local docker-exec behaviour).
+# =============================================================================
+
+tasks:
+  1:
+    mode: http
+    server_url: "${VAKRA_CAP1_URL}/mcp/{domain}"
+
+  2:
+    mode: http
+    server_url: "${VAKRA_CAP2_URL}/mcp/{domain}"
+
+  3:
+    mode: http
+    server_url: "${VAKRA_CAP3_URL}/mcp/{domain}"
+
+  4:
+    mode: http
+    server_url: "${VAKRA_CAP4_URL}/mcp/{domain}"

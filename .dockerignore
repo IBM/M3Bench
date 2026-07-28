@@ -4,8 +4,10 @@ __pycache__/
 *.pyc
 *.egg-info/
 
-# Data — mounted at runtime, not baked in
-data/
+# Data — mounted at runtime, not baked in. Anchored to the top-level data/ only
+# (leading slash) so small in-repo data dirs like environment/bpo/data/ — which the
+# BPO server needs baked in — are NOT excluded.
+/data/
 apis/m3/rest/db/
 apis/retrievers/chroma_data/
 apis/retrievers/queries/
