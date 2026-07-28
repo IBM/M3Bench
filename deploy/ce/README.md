@@ -14,6 +14,7 @@ untouched. All resources are named `vakra-*`.
 
 | I want to… | Read |
 |---|---|
+| A **visual landing page** — what this is + links to try/deploy/benchmark | **[index.html](index.html)** (open in a browser) |
 | **Reproduce the whole setup from scratch** (deploy data + apps), with every gotcha + fix | **[RUNBOOK.md](RUNBOOK.md)** ← authoritative |
 | **Use the already-deployed apps** — call the MCP endpoints, run the benchmark, browse tools | **[USING.md](USING.md)** |
 | A **one-page command cheatsheet** (deploy · use · operate) | **[CHEATSHEET.md](CHEATSHEET.md)** |
