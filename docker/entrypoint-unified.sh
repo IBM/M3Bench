@@ -3,6 +3,22 @@ set -e
 
 echo "=== M3 Unified Container Starting ==="
 
+# --- Optional: pull data from COS to local disk (DATA_SOURCE=sync) ---
+# Default (unset) or DATA_SOURCE=mount -> data is provided by a COS pds mount (or a
+# local bind mount) at the paths below; nothing to download here.
+# DATA_SOURCE=sync -> download from COS to ephemeral disk before starting servers
+# (fallback path; gives full local-fs semantics, e.g. writable ChromaDB for cap 4).
+if [ "$DATA_SOURCE" = "sync" ]; then
+    echo "DATA_SOURCE=sync -> pulling data from COS to local disk (this can take a while)..."
+    python /app/cos_sync.py --prefix databases --dest /app/db
+    python /app/cos_sync.py --prefix configs   --dest /app/environment/configs
+    if [ "$CAPABILITY_ID" = "4" ]; then
+        python /app/cos_sync.py --prefix indexed_documents --dest /app/retrievers/chroma_data
+        python /app/cos_sync.py --prefix queries          --dest /app/retrievers/queries || true
+    fi
+    echo "DATA_SOURCE=sync -> data ready."
+fi
+
 # --- Start M3 REST FastAPI on port 8000 ---
 echo "Starting M3 REST FastAPI on port 8000..."
 cd /app/m3-rest
@@ -53,7 +69,18 @@ if [ "$RETRIEVER_AVAILABLE" = "true" ]; then
     done
 fi
 
-echo "=== All services running. Container ready for exec. ==="
+echo "=== All services running. ==="
 
-# Keep container alive for docker exec -i usage
-exec tail -f /dev/null
+# --- Serve mode ---
+# SERVE_MODE=http  -> start the MCP stdio->HTTP bridge (Code Engine / remote clients).
+#                     The FastAPI backends above stay up (the MCP servers call them);
+#                     the bridge exposes MCP over HTTP at /mcp/<domain> on BRIDGE_PORT.
+# (unset/default)  -> keep the container alive for `docker exec -i` (local benchmark flow).
+if [ "$SERVE_MODE" = "http" ]; then
+    echo "SERVE_MODE=http -> starting MCP HTTP bridge on port ${BRIDGE_PORT:-8080} (endpoint: /mcp/<domain>)"
+    exec python /app/mcp_http_bridge.py --port "${BRIDGE_PORT:-8080}"
+else
+    echo "Container ready for exec."
+    # Keep container alive for docker exec -i usage
+    exec tail -f /dev/null
+fi

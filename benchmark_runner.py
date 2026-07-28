@@ -379,6 +379,8 @@ async def run_capability(
     tlog(f"Mode: {cfg.mode}")
     if not cfg.command and cfg.mode == "stdio":
         tlog(f"Container name: {cfg.container_name}")
+    elif cfg.mode in ("http", "streamable-http"):
+        tlog(f"Server URL: {cfg.server_url}")
     tlog(f"Processing {len(domain_list)} domain(s): {domain_list}")
 
     # Skip domains that already have output files (resume support)

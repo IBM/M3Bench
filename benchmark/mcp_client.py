@@ -57,7 +57,9 @@ def load_mcp_config(config_path: str) -> Dict[int, MCPConnectionConfig]:
             container_env=v.get("container_env", None),
             command=cmd,
             args=v.get("args", None),
-            server_url=v.get("server_url", None),
+            # Expand ${ENV} in server_url so a committed CE config can reference the
+            # per-app URLs written by deploy/ce/3_deploy_apps.sh (see .ce_urls.env).
+            server_url=(os.path.expandvars(v["server_url"]) if v.get("server_url") else None),
             secondary_container_command=v.get("secondary_container_command", None),
         )
     return result
@@ -135,6 +137,37 @@ async def create_client_and_connect(
                 f"Failed to connect to MCP server via stdio: {e}"
             ) from e
 
+    elif cfg.mode in ("http", "streamable-http"):
+        # Remote MCP over streamable HTTP (e.g. Code Engine). Per-domain scoping is
+        # preserved by the server side: the domain is carried in the URL path
+        # (/mcp/<domain>) and an X-MCP-Domain header, and the bridge spawns a
+        # subprocess pinned to that MCP_DOMAIN — so list_tools() returns only that
+        # domain's tools, exactly as in stdio/docker-exec mode.
+        if not cfg.server_url:
+            raise ValueError("http mode requires server_url")
+        if "${" in cfg.server_url:
+            raise RuntimeError(
+                f"server_url still contains an unexpanded variable: {cfg.server_url!r}. "
+                "Run the CE deploy (deploy/ce/3_deploy_apps.sh) and "
+                "`source deploy/ce/.ce_urls.env` before benchmarking against Code Engine."
+            )
+        if "{domain}" in cfg.server_url:
+            url = cfg.server_url.format(domain=domain)
+        else:
+            url = f"{cfg.server_url.rstrip('/')}/{domain}" if domain else cfg.server_url
+        headers = {"X-MCP-Domain": domain} if domain else {}
+        logger.info("Connecting to MCP server via streamable HTTP: %s", url)
+        from mcp.client.streamable_http import streamablehttp_client
+        try:
+            async with streamablehttp_client(url, headers=headers) as (read, write, _get_session_id):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    yield session
+        except Exception as e:
+            raise RuntimeError(
+                f"Failed to connect to MCP server at {url!r}: {e}"
+            ) from e
+
     elif cfg.mode == "websocket":
         if not cfg.server_url:
             raise ValueError("websocket mode requires server_url")
@@ -152,7 +185,7 @@ async def create_client_and_connect(
 
     else:
         raise ValueError(
-            f"Unknown mode: {cfg.mode!r}. Must be 'stdio' or 'websocket'"
+            f"Unknown mode: {cfg.mode!r}. Must be 'stdio', 'http', or 'websocket'"
         )
     
 def stop_mcp_server(cfg: MCPConnectionConfig):
@@ -162,8 +195,9 @@ def stop_mcp_server(cfg: MCPConnectionConfig):
     container.  For subprocess stdio and websocket modes the transport's own
     context manager handles teardown, so this is a no-op.
     """
-    if cfg.mode == "websocket":
-        # WebSocket connection is closed by the context manager; nothing to do.
+    if cfg.mode in ("websocket", "http", "streamable-http"):
+        # Network transports are closed by the client context manager; the CE
+        # bridge tears down its per-domain subprocess on session end. Nothing to do.
         return
 
     if cfg.mode == "stdio" and not cfg.command and cfg.container_name:

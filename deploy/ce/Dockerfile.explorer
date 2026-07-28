@@ -1,0 +1,21 @@
+# MCP Tools Explorer — Code Engine image.
+# Serves tools_explorer/app.py, pointed at the deployed VAKRA capability apps
+# (via MCP_CONFIG=benchmark/mcp_connection_config.ce.yaml + VAKRA_CAPn_URL env).
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN pip install --no-cache-dir \
+    fastapi "uvicorn[standard]" pydantic pyyaml "mcp==1.27.0" httpx
+
+# App code only (data is git-ignored / excluded by the staged build context).
+COPY tools_explorer/ tools_explorer/
+COPY benchmark/ benchmark/
+COPY environment/__init__.py environment/__init__.py
+COPY environment/tool_checksums.py environment/tool_checksums.py
+
+ENV PYTHONPATH=/app \
+    MCP_CONFIG=benchmark/mcp_connection_config.ce.yaml
+
+EXPOSE 8080
+CMD ["uvicorn", "tools_explorer.app:app", "--host", "0.0.0.0", "--port", "8080"]

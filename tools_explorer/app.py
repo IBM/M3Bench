@@ -12,6 +12,7 @@ Then open http://localhost:7860
 
 import json
 import logging
+import os
 import sys
 import traceback
 from pathlib import Path
@@ -46,7 +47,13 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 def _load_configs():
     from benchmark.mcp_client import load_mcp_config
-    config_path = PROJECT_ROOT / "benchmark" / "mcp_connection_config.yaml"
+    # MCP_CONFIG lets the explorer point at Code Engine instead of local containers,
+    # e.g. MCP_CONFIG=benchmark/mcp_connection_config.ce.yaml (after sourcing
+    # deploy/ce/.ce_urls.env). Defaults to the local docker-exec config.
+    override = os.environ.get("MCP_CONFIG")
+    config_path = Path(override) if override else PROJECT_ROOT / "benchmark" / "mcp_connection_config.yaml"
+    if not config_path.is_absolute():
+        config_path = PROJECT_ROOT / config_path
     return load_mcp_config(str(config_path))
 
 

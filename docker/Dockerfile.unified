@@ -83,6 +83,14 @@ RUN chmod +x entrypoint.sh
 # --- MCP dispatcher (single entrypoint for all tasks, routed by TASK_ID) ---
 COPY docker/mcp_dispatch.py mcp_dispatch.py
 
+# --- Optional MCP stdio->HTTP bridge + COS sync (used only for Code Engine) ---
+# Dormant in the default local docker-exec flow. The bridge needs a recent mcp for
+# StreamableHTTPSessionManager (upgrades only within the mcp 1.x line, no server
+# behaviour change); boto3 is used by cos_sync.py when DATA_SOURCE=sync.
+RUN pip install --no-cache-dir "mcp==1.27.0" boto3
+COPY docker/mcp_http_bridge.py mcp_http_bridge.py
+COPY docker/cos_sync.py       cos_sync.py
+
 # Volume mount points (data mounted at runtime, not baked in)
 VOLUME /app/db
 VOLUME /app/environment/configs
