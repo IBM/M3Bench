@@ -92,6 +92,7 @@ class BenchmarkResult:
     domain: str
     query: str
     answer: str = ""
+    thought: str = ""
     context: Optional[List[dict]] = None
     tool_calls: List[Dict] = field(default_factory=list)
     trajectory: List[Dict] = field(default_factory=list)  # Agent trajectory
@@ -302,6 +303,7 @@ def save_results_ground_truth(
                         "turn_id": r.turn_id,
                         "query": r.query,
                         "answer": r.answer,
+                        "thought": r.thought,
                         "sequence": {
                             "tool_call": tool_call_list
                         },

@@ -149,6 +149,25 @@ DEFAULT_MCP_CONFIG = str(
 AGENT_TIMEOUT_SECONDS = float(os.environ.get("AGENT_TIMEOUT_SECONDS", "300"))
 
 
+def _extract_react_thought(trajectory: List[dict]) -> str:
+    """Extract the ReAct agent's thought text from AI trajectory entries."""
+    thoughts: List[str] = []
+    for step in trajectory:
+        if step.get("type") != "AIMessage":
+            continue
+
+        reasoning = step.get("reasoning")
+        if reasoning:
+            thoughts.append(str(reasoning))
+            continue
+
+        content = step.get("content", "")
+        if content and step.get("tool_calls"):
+            thoughts.append(str(content))
+
+    return "\n\n".join(thoughts)
+
+
 async def run_benchmark_for_domain(
     domain: str,
     items: List[BenchmarkItem],
@@ -281,6 +300,7 @@ async def run_benchmark_for_domain(
                     result.answer = response.content
                     result.tool_calls = response.tool_calls
                     result.trajectory = response.trajectory
+                    result.thought = _extract_react_thought(response.trajectory)
                     result.status = "success"
                     elapsed = time.perf_counter() - start_time
                     tlog(
