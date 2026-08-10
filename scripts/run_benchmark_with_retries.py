@@ -26,6 +26,9 @@ DEFAULT_RETRY_ERROR_SUBSTRINGS = (
     "litellm.badrequesterror",
     "connection closed",
 )
+DEFAULT_POLICY_JUDGE_PATH = Path(
+    "/root/vakra-internal-read-only/evaluator/policy_judge.py"
+)
 
 
 @dataclass
@@ -86,6 +89,15 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=None,
         help="Log file for evaluator.",
+    )
+    parser.add_argument(
+        "--policy-judge-path",
+        type=Path,
+        default=DEFAULT_POLICY_JUDGE_PATH,
+        help=(
+            "Path passed to evaluator.py via --policy-judge-path "
+            f"(default: {DEFAULT_POLICY_JUDGE_PATH})."
+        ),
     )
     parser.add_argument(
         "--gt-root",
@@ -306,6 +318,7 @@ def evaluator_command(
     gt_root: Path,
     pred_root: Path,
     output_path: Path,
+    policy_judge_path: Path,
     extra_args: Sequence[str],
 ) -> list[str]:
     cmd = [
@@ -319,6 +332,8 @@ def evaluator_command(
         str(pred_root),
         "--output",
         str(output_path),
+        "--policy-judge-path",
+        str(policy_judge_path),
     ]
     cmd.extend(extra_args)
     return cmd
@@ -475,6 +490,7 @@ def main() -> int:
         gt_root=gt_root,
         pred_root=output_dir,
         output_path=eval_output,
+        policy_judge_path=args.policy_judge_path,
         extra_args=args.evaluator_extra_arg,
     )
     eval_result = run_logged_command(
