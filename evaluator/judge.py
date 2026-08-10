@@ -6,6 +6,7 @@ import json
 from copy import deepcopy
 from prompt import GroundednessPrompt, CorrectnessPrompt
 from utils import JudgeInput, JudgeOutput
+from constant import N_TOOL_CALLS_PER_TURN
 from langchain_openai import ChatOpenAI
 from typing import Any, Dict, Optional, Tuple
 
@@ -14,9 +15,6 @@ _CONCLUSION_RE = re.compile(r"<conclusion>\s*(.*?)\s*</conclusion>", re.IGNORECA
 
 _SCORE_MAP = {"yes": 1.0, "partial": 0.0, "no": 0.0, "unsure": 0.0}
 
-N_TOOL_CALLS_PER_TURN=20
-
-
 class JudgeOutputParseError(ValueError):
     pass
 
@@ -24,14 +22,10 @@ class JudgeValidationError(ValueError):
     """Raised when a judge returns an unexpected/invalid score."""
     pass
 
-class ChatModel(ChatOpenAI):
-    """
-    openai/gpt-oss-120b chat model is being used as LLM-as-a-judge using langchain-openai.
-    Groq-backed OpenAI-compatible chat model.
-    """
+class ChatGroq(ChatOpenAI):
+    """Groq-backed OpenAI-compatible chat model."""
 
     def __init__(self, config: dict):
-        # Set model with model or model_name
         model_name = config.get("model_name", "openai/gpt-oss-120b")
         end_point = config.get("end_point", "https://api.groq.com/openai")
 
@@ -41,16 +35,34 @@ class ChatModel(ChatOpenAI):
 
         params = config.get("params", {})
 
+        groq_config = {}
+        groq_config.setdefault("model", model_name)
+        groq_config.setdefault("api_key", api_key)
+        groq_config.setdefault("base_url", end_point.rstrip("/") + "/v1")
+        groq_config.setdefault("temperature", 0)
+        groq_config.update(params)
+
+        super().__init__(**groq_config)
+
+class ChatRits(ChatOpenAI):
+    """RITS chat model integration using langchain-openai."""
+
+    def __init__(self, config):
+        # Set model with model or model_name
+        model_name=config.get("model_name", "openai/gpt-oss-120b")
+        end_point=config.get("end_point","https://inference-3scale-apicast-production.apps.rits.fmaas.res.ibm.com/gpt-oss-120b")
+        rits_api_key = os.getenv("RITS_API_KEY")
+        if rits_api_key is None:
+            raise ValueError("rits_api_key is required")
+        params = config.get("params", {})
         # Set default values for overriding fields
-        config = {}
-        config.setdefault("model", model_name)
-        config.setdefault("api_key", api_key)
-        config.setdefault("base_url", end_point.rstrip("/") + "/v1")
-        config.setdefault("temperature", 0)
-
-        config.update(params)
-
-        super().__init__(**config)
+        rits_config = {}
+        rits_config.setdefault("model_name", model_name)
+        rits_config.setdefault("api_key", "/")
+        rits_config.setdefault("default_headers", {"RITS_API_KEY": rits_api_key})
+        rits_config.setdefault("base_url", end_point + "/v1")
+        rits_config.update(params)
+        super().__init__(**rits_config)
 
 class LLMJudge:
     """
@@ -60,7 +72,23 @@ class LLMJudge:
     def __init__(self,
                 config: dict = {}):
         self.model_config=config
-        self.llm=ChatModel(self.model_config)
+        self.llm=self._build_llm(self.model_config)
+
+    def _build_llm(self, config: dict) -> ChatOpenAI:
+        backend = (
+            config.get("backend")
+            or config.get("provider")
+            or os.getenv("JUDGE_BACKEND")
+        )
+        if backend is None:
+            backend = "rits" # Use RITS as default judge backend if not specified
+
+        backend = backend.lower()
+        if backend == "rits":
+            return ChatRits(config)
+        if backend == "groq":
+            return ChatGroq(config)
+        raise ValueError(f"Unsupported judge backend: {backend!r}. Expected 'groq' or 'rits'.")
 
     def invoke(self, prompt:str) -> str:
         res = self.llm.invoke(prompt).content

@@ -29,8 +29,8 @@ Each paired dialogue is scored in the following order:
    If exact match fails, an LLM judge compares the predicted answer against the ground-truth answer for the final turn. The correctness prompt is adapted from CRAG and is defined in [`prompt.py`](/vakra/evaluator/prompt.py).
 3. **Groundedness check**
    If the answer is acceptable, another LLM judge verifies that the predicted answer is grounded in the executed tool outputs.
-4. **PolicyAdheranceJudge**
-   NOT INCLUDED: For the Multi-hop multi-source capability, we use a PolicyAdherenceJudge that programmatically checks the agent's application of a policy. This judge is currently not included for evaluation.
+4. **PolicyAdherenceJudge**
+   Optional: for the multi-hop multi-source capability, the evaluator can programmatically check policy application when `--policy-judge-path /path/to/policy_judge.py` is provided. By default this argument is unset and policy judging is disabled. If you need policy evaluation, open a GitHub issue requesting access to the PolicyJudge file.
 
 Turn scores are then aggregated into a dialogue score. The default aggregation policy in this repo is `mean`.
 
@@ -144,6 +144,7 @@ CLI arguments:
 - `--output`: output file path; if omitted, defaults to `results.json` next to the capability directory
 - `--mcp-config`: MCP connection YAML, defaulting to [`benchmark/mcp_connection_config.yaml`](/vakra/benchmark/mcp_connection_config.yaml)
 - `--domains`: optional list of domain names to evaluate
+- `--policy-judge-path`: optional path to a PolicyJudge Python file. If omitted, policy judging is disabled.
 
 ## Output Format
 
